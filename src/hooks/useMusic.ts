@@ -6,10 +6,19 @@ const MUSIC_PATH = '/music/background.mp3';
 
 export function useMusic() {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => {
+    // Initialize from localStorage synchronously
+    if (typeof window === 'undefined') return true;
+    try {
+      const saved = localStorage.getItem('game-music-muted');
+      return saved === 'true';
+    } catch {
+      return true;
+    }
+  });
   const [volume, setVolume] = useState(0.3);
-  const [isLoaded, setIsLoaded] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const hasInteracted = useRef(false);
 
   // Initialize audio
   useEffect(() => {
@@ -17,62 +26,55 @@ export function useMusic() {
 
     const audio = new Audio(MUSIC_PATH);
     audio.loop = true;
-    audio.volume = 0.3;
+    audio.volume = volume;
     audioRef.current = audio;
 
-    // Load saved preferences
-    try {
-      const savedMuted = localStorage.getItem('game-music-muted');
-      const savedVolume = localStorage.getItem('game-music-volume');
-      
-      if (savedMuted !== null) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setIsMuted(savedMuted === 'true');
+    // Handle first user interaction to enable audio
+    const handleInteraction = () => {
+      if (!hasInteracted.current) {
+        hasInteracted.current = true;
+        // If user hasn't explicitly muted, start playing
+        const savedMuted = localStorage.getItem('game-music-muted');
+        if (savedMuted === null || savedMuted === 'false') {
+          setIsMuted(false);
+        }
       }
-      if (savedVolume !== null) {
-        const vol = parseFloat(savedVolume);
-        setVolume(vol);
-        audio.volume = vol;
-      }
-    } catch (error) {
-      console.warn('Failed to load music preferences:', error);
-    }
+    };
 
-    setIsLoaded(true);
+    document.addEventListener('click', handleInteraction);
+    document.addEventListener('touchstart', handleInteraction);
 
     return () => {
       audio.pause();
       audio.src = '';
+      document.removeEventListener('click', handleInteraction);
+      document.removeEventListener('touchstart', handleInteraction);
     };
-  }, []);
+  }, [volume]);
 
   // Save preferences
   useEffect(() => {
-    if (!isLoaded) return;
     try {
       localStorage.setItem('game-music-muted', String(isMuted));
-      localStorage.setItem('game-music-volume', String(volume));
     } catch (error) {
       console.warn('Failed to save music preferences:', error);
     }
-  }, [isMuted, volume, isLoaded]);
+  }, [isMuted]);
 
   // Play/pause based on muted state
   useEffect(() => {
-    if (!audioRef.current || !isLoaded) return;
+    if (!audioRef.current) return;
 
     if (isMuted) {
       audioRef.current.pause();
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsPlaying(false);
     } else {
-      audioRef.current.play().catch(() => {
-        // Autoplay blocked, will play on user interaction
+      audioRef.current.play().then(() => {
+        // Only set state if we actually started playing
+      }).catch(() => {
+        // Autoplay blocked - this is expected
       });
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setIsPlaying(true);
     }
-  }, [isMuted, isLoaded]);
+  }, [isMuted]);
 
   // Update volume
   useEffect(() => {
@@ -85,20 +87,6 @@ export function useMusic() {
     setIsMuted(prev => !prev);
   }, []);
 
-  const play = useCallback(() => {
-    if (audioRef.current && !isMuted) {
-      audioRef.current.play().catch(() => {});
-      setIsPlaying(true);
-    }
-  }, [isMuted]);
-
-  const pause = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-    }
-  }, []);
-
   const setVolumeLevel = useCallback((level: number) => {
     setVolume(Math.max(0, Math.min(1, level)));
   }, []);
@@ -107,10 +95,7 @@ export function useMusic() {
     isPlaying,
     isMuted,
     volume,
-    isLoaded,
     toggleMusic,
-    play,
-    pause,
     setVolume: setVolumeLevel,
   };
 }

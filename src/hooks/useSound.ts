@@ -1,106 +1,182 @@
 'use client';
 
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { SoundName } from '@/lib/types';
 
-// Sound file paths
-const SOUND_PATHS: Record<SoundName, string> = {
-  your_turn: '/sounds/your_turn.wav',
-  mau_mau: '/sounds/mau_mau.wav',
-  draw_card: '/sounds/draw_card.wav',
-  winner: '/sounds/winner.wav',
-  reverse: '/sounds/reverse.wav',
-  skip: '/sounds/skip.wav',
-  choose_suit: '/sounds/choose_suit.wav',
-  draw_two: '/sounds/draw_two.wav',
-  game_start: '/sounds/game_start.wav',
-  invalid: '/sounds/invalid.wav',
-  draw_again: '/sounds/draw_again.wav',
-  last_card: '/sounds/last_card.wav',
+// Sound types
+export type SoundName = 
+  | 'card_play'
+  | 'card_draw'
+  | 'win'
+  | 'invalid'
+  | 'select'
+  | 'game_start'
+  | 'check';
+
+// Generate simple sound effects using Web Audio API
+const createSoundGenerator = (audioContext: AudioContext) => {
+  const sounds: Record<SoundName, () => void> = {
+    card_play: () => {
+      // Short click sound
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+    },
+    card_draw: () => {
+      // Whoosh sound
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 400;
+      oscillator.type = 'triangle';
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.15);
+    },
+    win: () => {
+      // Victory fanfare - three ascending notes
+      const playNote = (freq: number, delay: number) => {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = freq;
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime + delay);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + delay + 0.3);
+        oscillator.start(audioContext.currentTime + delay);
+        oscillator.stop(audioContext.currentTime + delay + 0.3);
+      };
+      playNote(523.25, 0);    // C5
+      playNote(659.25, 0.15); // E5
+      playNote(783.99, 0.3);  // G5
+    },
+    invalid: () => {
+      // Error buzz
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 200;
+      oscillator.type = 'sawtooth';
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    },
+    select: () => {
+      // Selection ping
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 600;
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.08);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.08);
+    },
+    game_start: () => {
+      // Start game sound - two notes
+      const playNote = (freq: number, delay: number) => {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.frequency.value = freq;
+        oscillator.type = 'triangle';
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime + delay);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + delay + 0.2);
+        oscillator.start(audioContext.currentTime + delay);
+        oscillator.stop(audioContext.currentTime + delay + 0.2);
+      };
+      playNote(440, 0);    // A4
+      playNote(554.37, 0.1); // C#5
+    },
+    check: () => {
+      // Check/chess sound
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.frequency.value = 1000;
+      oscillator.type = 'square';
+      gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+    },
+  };
+
+  return sounds;
 };
 
-// Audio cache to prevent reloading
-const audioCache = new Map<string, HTMLAudioElement>();
-
-// Preload all sounds function (defined outside hook to avoid hoisting issues)
-function preloadAllSounds() {
-  if (typeof window === 'undefined') return;
-
-  Object.entries(SOUND_PATHS).forEach(([name, path]) => {
-    if (!audioCache.has(name)) {
-      try {
-        const audio = new Audio(path);
-        audio.preload = 'auto';
-        audioCache.set(name, audio);
-      } catch (error) {
-        console.warn(`Failed to preload sound: ${name}`, error);
-      }
+export function useSound() {
+  const [isMuted, setIsMuted] = useState(() => {
+    // Initialize from localStorage synchronously
+    if (typeof window === 'undefined') return false;
+    try {
+      const saved = localStorage.getItem('game-sound-muted');
+      return saved === 'true';
+    } catch {
+      return false;
     }
   });
-}
+  const audioContextRef = useRef<AudioContext | null>(null);
 
-export function useSound() {
-  // Start with default values to avoid hydration mismatch
-  const [isMuted, setIsMuted] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
-  const isClient = useRef(false);
-
-  // Load saved preferences after hydration
+  // Initialize AudioContext on first user interaction
   useEffect(() => {
-    isClient.current = true;
-    
-    // Load saved mute preference
-    try {
-      const savedMuted = localStorage.getItem('maumau-muted');
-      if (savedMuted !== null) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setIsMuted(savedMuted === 'true');
+    const initAudio = () => {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       }
-    } catch (error) {
-      console.warn('Failed to load mute preference:', error);
-    }
-    
-    // Preload all sounds
-    preloadAllSounds();
-    setIsLoaded(true);
+    };
+
+    document.addEventListener('click', initAudio, { once: true });
+    document.addEventListener('touchstart', initAudio, { once: true });
+
+    return () => {
+      document.removeEventListener('click', initAudio);
+      document.removeEventListener('touchstart', initAudio);
+    };
   }, []);
 
-  // Save mute preference
+  // Save preference
   useEffect(() => {
-    if (isClient.current) {
-      try {
-        localStorage.setItem('maumau-muted', String(isMuted));
-      } catch (error) {
-        console.warn('Failed to save mute preference:', error);
-      }
+    try {
+      localStorage.setItem('game-sound-muted', String(isMuted));
+    } catch (error) {
+      console.warn('Failed to save sound preference:', error);
     }
   }, [isMuted]);
 
-  // Play a sound
   const playSound = useCallback((name: SoundName) => {
-    if (isMuted || typeof window === 'undefined') return;
+    if (isMuted || !audioContextRef.current) return;
 
-    const cachedAudio = audioCache.get(name);
-    
-    if (cachedAudio) {
-      // Reset and play
-      cachedAudio.currentTime = 0;
-      cachedAudio.volume = 0.5;
-      cachedAudio.play().catch((error) => {
-        console.warn(`Failed to play sound: ${name}`, error);
-      });
-    } else {
-      // Create and play new audio
-      const audio = new Audio(SOUND_PATHS[name]);
-      audio.volume = 0.5;
-      audioCache.set(name, audio);
-      audio.play().catch((error) => {
-        console.warn(`Failed to play sound: ${name}`, error);
-      });
+    try {
+      // Resume audio context if suspended
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
+
+      const sounds = createSoundGenerator(audioContextRef.current);
+      if (sounds[name]) {
+        sounds[name]();
+      }
+    } catch (error) {
+      console.warn('Failed to play sound:', error);
     }
   }, [isMuted]);
 
-  // Toggle mute
   const toggleMute = useCallback(() => {
     setIsMuted(prev => !prev);
   }, []);
@@ -109,9 +185,21 @@ export function useSound() {
     playSound,
     isMuted,
     toggleMute,
-    isLoaded,
   };
 }
 
-// Export for use in other components
-export type UseSoundReturn = ReturnType<typeof useSound>;
+// Map old sound names to new ones for backwards compatibility
+export const soundMap: Record<string, SoundName> = {
+  your_turn: 'card_play',
+  mau_mau: 'win',
+  draw_card: 'card_draw',
+  winner: 'win',
+  reverse: 'card_play',
+  skip: 'card_play',
+  choose_suit: 'select',
+  draw_two: 'card_draw',
+  game_start: 'game_start',
+  invalid: 'invalid',
+  draw_again: 'card_draw',
+  last_card: 'card_play',
+};

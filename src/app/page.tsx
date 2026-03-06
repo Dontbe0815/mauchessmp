@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { useSound } from '@/hooks/useSound';
+import { useSound, soundMap, SoundName } from '@/hooks/useSound';
 import { useMusic } from '@/hooks/useMusic';
 import { GameSelection, GameType } from '@/components/GameSelection';
 import { ChessGame } from '@/components/chess/ChessGame';
@@ -23,18 +23,17 @@ import {
   selectSuit as selectSuitLogic,
   nextTurn as nextTurnLogic,
   getPlayableCards,
-  generateId,
   getAIMove,
   getAIPreferredSuit
 } from '@/lib/game-logic';
 import { 
   Music, 
   Home as HomeIcon, 
-  Settings, 
   Bot,
   Sparkles,
-  RotateCcw,
-  Zap
+  Users,
+  Globe,
+  Monitor
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -48,6 +47,7 @@ const cardThemes: Record<CardTheme, { name: string; gradient: string }> = {
 };
 
 type AIDifficulty = 'easy' | 'medium' | 'hard';
+type GameMode = 'ai' | 'local' | 'online';
 
 export default function Home() {
   const { playSound, isMuted, toggleMute } = useSound();
@@ -55,15 +55,23 @@ export default function Home() {
   
   // Game state
   const [selectedGame, setSelectedGame] = useState<GameType>(null);
-  const [showSettings, setShowSettings] = useState(false);
   
   // Mau Mau state
   const [gameState, setGameState] = useState<ReturnType<typeof createInitialGameState> | null>(null);
   const [showSetup, setShowSetup] = useState(true);
   const [playerName, setPlayerName] = useState('');
-  const [vsAI, setVsAI] = useState(true);
+  const [player2Name, setPlayer2Name] = useState('');
+  const [gameMode, setGameMode] = useState<GameMode>('ai');
   const [aiDifficulty, setAIDifficulty] = useState<AIDifficulty>('medium');
   const [cardTheme, setCardTheme] = useState<CardTheme>('classic');
+  const [roomCode, setRoomCode] = useState('');
+  const [isJoining, setIsJoining] = useState(false);
+
+  // Play sound with mapping
+  const playMappedSound = useCallback((name: string) => {
+    const mappedName = soundMap[name] || 'card_play';
+    playSound(mappedName as SoundName);
+  }, [playSound]);
 
   // AI move handler
   const makeAIMove = useCallback(() => {
@@ -78,25 +86,23 @@ export default function Home() {
     if (aiCard) {
       let newState = playCardLogic(gameState, currentPlayer.id, aiCard.id);
       
-      // If suit selection needed, AI picks best suit
       if (newState.phase === 'suitSelection') {
         const preferredSuit = getAIPreferredSuit(currentPlayer.hand.filter(c => c.id !== aiCard.id), gameState.rules);
         newState = selectSuitLogic(newState, preferredSuit);
       }
       
       setGameState(newState);
-      playSound?.('draw_card');
+      playMappedSound('draw_card');
     } else {
-      // Draw a card
       const newState = drawCardLogic(gameState, currentPlayer.id);
       setGameState(newState);
-      playSound?.('draw_card');
+      playMappedSound('draw_card');
     }
-  }, [gameState, aiDifficulty, playSound]);
+  }, [gameState, aiDifficulty, playMappedSound]);
 
   // AI turn effect
   useEffect(() => {
-    if (!vsAI || !gameState || gameState.phase !== 'playing') return;
+    if (gameMode !== 'ai' || !gameState || gameState.phase !== 'playing') return;
     
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
     if (currentPlayer.id === 'ai-player') {
@@ -105,50 +111,52 @@ export default function Home() {
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [gameState?.currentPlayerIndex, vsAI, gameState?.phase, makeAIMove]);
+  }, [gameState?.currentPlayerIndex, gameMode, gameState?.phase, makeAIMove]);
 
   // Get current player info
   const currentPlayer = gameState?.players[gameState.currentPlayerIndex];
+  const isPlayerTurn = gameMode === 'ai' ? currentPlayer?.id !== 'ai-player' : true;
+  
   const playableCards = useMemo(() => {
-    if (!gameState || !currentPlayer || currentPlayer.id === 'ai-player') return [];
+    if (!gameState || !currentPlayer) return [];
+    if (gameMode === 'ai' && currentPlayer.id === 'ai-player') return [];
     const topCard = gameState.discardPile[gameState.discardPile.length - 1];
     return getPlayableCards(currentPlayer.hand, topCard, gameState.currentSuit, gameState.rules);
-  }, [gameState, currentPlayer]);
+  }, [gameState, currentPlayer, gameMode]);
 
-  const canDraw = playableCards.length === 0 && gameState?.phase === 'playing' && currentPlayer?.id !== 'ai-player';
+  const canDraw = playableCards.length === 0 && gameState?.phase === 'playing' && isPlayerTurn;
 
   // Handle card click
   const handleCardClick = useCallback((card: CardType) => {
-    if (!gameState || !currentPlayer || currentPlayer.id === 'ai-player') return;
+    if (!gameState || !currentPlayer || !isPlayerTurn) return;
     
     const result = playCardLogic(gameState, currentPlayer.id, card.id);
     setGameState(result);
-    playSound?.('draw_card');
-  }, [gameState, currentPlayer, playSound]);
+    playMappedSound('draw_card');
+  }, [gameState, currentPlayer, isPlayerTurn, playMappedSound]);
 
   // Handle draw card
   const handleDrawCard = useCallback(() => {
-    if (!gameState || !currentPlayer || currentPlayer.id === 'ai-player') return;
+    if (!gameState || !currentPlayer || !isPlayerTurn) return;
     const newState = drawCardLogic(gameState, currentPlayer.id);
     setGameState(newState);
     
-    // Auto end turn after drawing if can't play
     if (newState.canPlayDrawnCard === false) {
       setTimeout(() => {
         setGameState(prev => prev ? nextTurnLogic(prev) : null);
       }, 500);
     }
     
-    playSound?.('draw_card');
-  }, [gameState, currentPlayer, playSound]);
+    playMappedSound('draw_card');
+  }, [gameState, currentPlayer, isPlayerTurn, playMappedSound]);
 
   // Handle suit selection
   const handleSelectSuit = useCallback((suit: Suit) => {
     if (!gameState) return;
     const newState = selectSuitLogic(gameState, suit);
     setGameState(newState);
-    playSound?.('choose_suit');
-  }, [gameState, playSound]);
+    playMappedSound('choose_suit');
+  }, [gameState, playMappedSound]);
 
   // Handle new game
   const handleNewGame = useCallback(() => {
@@ -156,22 +164,31 @@ export default function Home() {
     setShowSetup(true);
   }, []);
 
-  // Handle start game from setup
+  // Handle start game
   const handleStartGame = useCallback(() => {
-    const name = playerName.trim() || 'Spieler';
-    const names = vsAI ? [name, 'KI'] : [name, 'Spieler 2'];
+    const name1 = playerName.trim() || 'Spieler 1';
+    
+    let names: string[];
+    if (gameMode === 'ai') {
+      names = [name1, 'KI'];
+    } else if (gameMode === 'local') {
+      const name2 = player2Name.trim() || 'Spieler 2';
+      names = [name1, name2];
+    } else {
+      // Online mode - will be handled separately
+      names = [name1, 'Gegner'];
+    }
     
     const newState = createInitialGameState(names, defaultRules, 5);
     
-    // Mark AI player
-    if (vsAI && newState.players[1]) {
+    if (gameMode === 'ai' && newState.players[1]) {
       newState.players[1].id = 'ai-player';
     }
     
     setGameState(newState);
     setShowSetup(false);
-    playSound?.('game_start');
-  }, [playerName, vsAI, playSound]);
+    playMappedSound('game_start');
+  }, [playerName, player2Name, gameMode, playMappedSound]);
 
   // Game selection screen
   if (!selectedGame) {
@@ -186,14 +203,13 @@ export default function Home() {
 
   // Chess game
   if (selectedGame === 'chess') {
-    return <ChessGame onBack={() => setSelectedGame(null)} playSound={playSound} />;
+    return <ChessGame onBack={() => setSelectedGame(null)} playSound={playMappedSound} />;
   }
 
-  // Mau Mau game - Setup
+  // Mau Mau setup
   if (showSetup || !gameState) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-green-50 to-blue-50 p-4">
-        {/* Header */}
         <div className="max-w-md mx-auto mb-4">
           <Button variant="ghost" onClick={() => setSelectedGame(null)} className="gap-2 mb-4">
             <HomeIcon className="w-4 h-4" />
@@ -206,30 +222,71 @@ export default function Home() {
             <CardTitle className="text-center text-2xl">🃏 Mau Mau</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Player name */}
+            {/* Game mode selection */}
             <div className="space-y-2">
-              <Label htmlFor="playerName">Dein Name</Label>
-              <input
-                id="playerName"
-                type="text"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="Name eingeben..."
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
-              />
+              <Label>Spielmodus</Label>
+              <div className="grid grid-cols-3 gap-2">
+                <Button
+                  variant={gameMode === 'ai' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setGameMode('ai')}
+                  className="flex-col h-auto py-2"
+                >
+                  <Bot className="w-4 h-4 mb-1" />
+                  <span className="text-xs">Gegen KI</span>
+                </Button>
+                <Button
+                  variant={gameMode === 'local' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setGameMode('local')}
+                  className="flex-col h-auto py-2"
+                >
+                  <Monitor className="w-4 h-4 mb-1" />
+                  <span className="text-xs">Lokal</span>
+                </Button>
+                <Button
+                  variant={gameMode === 'online' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setGameMode('online')}
+                  className="flex-col h-auto py-2"
+                >
+                  <Globe className="w-4 h-4 mb-1" />
+                  <span className="text-xs">Online</span>
+                </Button>
+              </div>
             </div>
 
-            {/* AI opponent toggle */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Bot className="w-5 h-5 text-gray-500" />
-                <Label>Gegen KI spielen</Label>
+            {/* Player names */}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="player1">Spieler 1</Label>
+                <input
+                  id="player1"
+                  type="text"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder="Dein Name..."
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
+                />
               </div>
-              <Switch checked={vsAI} onCheckedChange={setVsAI} />
+              
+              {gameMode === 'local' && (
+                <div className="space-y-2">
+                  <Label htmlFor="player2">Spieler 2</Label>
+                  <input
+                    id="player2"
+                    type="text"
+                    value={player2Name}
+                    onChange={(e) => setPlayer2Name(e.target.value)}
+                    placeholder="Name des Gegners..."
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500"
+                  />
+                </div>
+              )}
             </div>
 
             {/* AI difficulty */}
-            {vsAI && (
+            {gameMode === 'ai' && (
               <div className="space-y-2">
                 <Label>KI-Schwierigkeit</Label>
                 <div className="flex gap-2">
@@ -245,6 +302,42 @@ export default function Home() {
                     </Button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Online room */}
+            {gameMode === 'online' && (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => setIsJoining(false)}
+                    variant={!isJoining ? 'default' : 'outline'}
+                    className="flex-1"
+                  >
+                    Raum erstellen
+                  </Button>
+                  <Button
+                    onClick={() => setIsJoining(true)}
+                    variant={isJoining ? 'default' : 'outline'}
+                    className="flex-1"
+                  >
+                    Raum beitreten
+                  </Button>
+                </div>
+                
+                {isJoining && (
+                  <div className="space-y-2">
+                    <Label>Raum-Code</Label>
+                    <input
+                      type="text"
+                      value={roomCode}
+                      onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                      placeholder="XXXX"
+                      maxLength={4}
+                      className="w-full px-3 py-2 border rounded-lg text-center text-2xl tracking-widest focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -275,8 +368,20 @@ export default function Home() {
               size="lg"
               className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
             >
-              Spiel starten
+              {gameMode === 'online' 
+                ? (isJoining ? 'Raum beitreten' : 'Raum erstellen')
+                : 'Spiel starten'}
             </Button>
+
+            {/* Player count info */}
+            <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
+              <Users className="w-4 h-4" />
+              <span>
+                {gameMode === 'ai' && '1 Spieler gegen KI'}
+                {gameMode === 'local' && '2 Spieler am selben Gerät'}
+                {gameMode === 'online' && '2 Spieler online'}
+              </span>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -294,8 +399,6 @@ export default function Home() {
   }
 
   // Main game UI
-  const isPlayerTurn = currentPlayer?.id !== 'ai-player';
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-green-50 to-blue-50 flex flex-col">
       {/* Header */}
@@ -306,6 +409,9 @@ export default function Home() {
             Menü
           </Button>
           <Badge variant="outline">Mau Mau</Badge>
+          {gameMode === 'ai' && <Badge variant="secondary">vs KI</Badge>}
+          {gameMode === 'local' && <Badge variant="secondary">Lokal</Badge>}
+          {gameMode === 'online' && <Badge variant="secondary">Online</Badge>}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -327,14 +433,28 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Opponent info */}
-      {vsAI && gameState.players[1] && (
+      {/* Opponent info for AI mode */}
+      {gameMode === 'ai' && gameState.players[1] && (
         <div className="bg-gray-100 px-4 py-2 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot className="w-4 h-4" />
             <span className="font-medium">KI</span>
             {!isPlayerTurn && (
               <Badge className="bg-amber-500 animate-pulse">Denkt nach...</Badge>
+            )}
+          </div>
+          <Badge variant="outline">{gameState.players[1].hand.length} Karten</Badge>
+        </div>
+      )}
+
+      {/* Player info for local mode */}
+      {gameMode === 'local' && gameState.players[1] && (
+        <div className="bg-gray-100 px-4 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4" />
+            <span className="font-medium">{gameState.players[1].name}</span>
+            {!isPlayerTurn && (
+              <Badge className="bg-green-500">Am Zug</Badge>
             )}
           </div>
           <Badge variant="outline">{gameState.players[1].hand.length} Karten</Badge>
